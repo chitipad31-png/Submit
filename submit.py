@@ -28,8 +28,7 @@ TEAMS = [
     "ข้อ 12: คะแนนพนักงาน",
 ]
 SOURCES = [
-    "Annual Report 2023",
-    "Annual Report 2022",
+    "Annual Report 2025",
     "Climate Action Plan",
     "Investor Presentation",
     "Sustainability Report",
@@ -292,3 +291,49 @@ with tab_data:
             data=csv,
             file_name=f"valuation_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv")
+        st.divider()
+        st.markdown("""
+<div style="font-size:1rem;font-weight:700;color:#191c1f;display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+  <span style="display:inline-block;width:4px;height:18px;background:#003d7c;border-radius:99px;"></span>
+  แก้ไขหรือลบรายการ
+</div>
+""", unsafe_allow_html=True)
+        with st.expander("✏️ แก้ไขหรือลบรายการ"):
+            options = [f"{r['nickname']} — {r['team']} ({r['submitted_at'][:10]})"
+                       for _, r in display_df.iterrows()]
+            selected = st.selectbox("เลือกรายการ", options)
+            idx = options.index(selected)
+            row = display_df.iloc[idx]
+
+            col1, col2 = st.columns(2)
+            with col1:
+                new_name    = st.text_input("ชื่อ-นามสกุล",        value=row.get("full_name",""))
+                new_nick    = st.text_input("ชื่อเล่น",             value=row.get("nickname",""))
+                new_sid     = st.text_input("รหัสนักศึกษา",         value=row.get("student_id",""))
+                new_team    = st.selectbox("หัวข้อ", TOPICS,        index=TOPICS.index(row.get("team", TOPICS[0])) if row.get("team") in TOPICS else 0)
+            with col2:
+                new_finding = st.text_area("ประเด็นหลัก",           value=row.get("key_findings",""), height=120)
+                new_nums    = st.text_input("ตัวเลขสำคัญ",           value=row.get("highlight_nums",""))
+                new_source  = st.text_input("แหล่งอ้างอิง",          value=row.get("source",""))
+                new_page    = st.text_input("เลขหน้า",               value=row.get("page_number",""))
+
+            btn1, btn2 = st.columns(2)
+            with btn1:
+                if st.button("💾 บันทึกการแก้ไข", use_container_width=True):
+                    supabase.table("submissions").update({
+                        "full_name":      new_name.strip(),
+                        "nickname":       new_nick.strip(),
+                        "student_id":     new_sid.strip(),
+                        "team":           new_team,
+                        "key_findings":   new_finding.strip(),
+                        "highlight_nums": new_nums.strip(),
+                        "source":         new_source.strip(),
+                        "page_number":    new_page.strip(),
+                    }).eq("id", row["id"]).execute()
+                    st.success("✅ แก้ไขเรียบร้อย!")
+                    st.rerun()
+            with btn2:
+                if st.button("🗑️ ลบรายการนี้", type="primary", use_container_width=True):
+                    supabase.table("submissions").delete().eq("id", row["id"]).execute()
+                    st.success("✅ ลบเรียบร้อย!")
+                    st.rerun()
