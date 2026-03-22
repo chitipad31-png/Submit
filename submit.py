@@ -299,7 +299,8 @@ with tab_data:
 </div>
 """, unsafe_allow_html=True)
         with st.expander("✏️ แก้ไขหรือลบรายการ"):
-            options = [f"{r['nickname']} — {r['team']} ({r['submitted_at'][:10]})"
+            options = [f"{r.get('nickname','?')} — {r.get('team','?')} (#{r.get('id','?')})"
+           for _, r in display_df.iterrows()]
                        for _, r in display_df.iterrows()]
             selected = st.selectbox("เลือกรายการ", options)
             idx = options.index(selected)
