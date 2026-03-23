@@ -2,10 +2,6 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 from datetime import datetime
-from pathlib import Path
-
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -31,7 +27,20 @@ TOPICS = [
     "ข้อ 12: คะแนนพนักงาน",
 ]
 
-def insert_row(data, image_path):
+def upload_image(file) -> str | None:
+    """อัปโหลดไฟล์ไปยัง Supabase Storage และคืน public URL"""
+    if file is None:
+        return None
+    safe_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.name}"
+    supabase.storage.from_("uploads").upload(
+        path=safe_name,
+        file=file.getvalue(),
+        file_options={"content-type": file.type}
+    )
+    url = supabase.storage.from_("uploads").get_public_url(safe_name)
+    return url
+
+def insert_row(data, image_url):
     supabase.table("submissions").insert({
         "full_name":      data["full_name"],
         "nickname":       data["nickname"],
@@ -41,7 +50,7 @@ def insert_row(data, image_path):
         "highlight_nums": data["highlight_nums"],
         "source":         data["source"],
         "page_number":    data["page_number"],
-        "image_path":     image_path,
+        "image_path":     image_url,
         "submitted_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }).execute()
 
@@ -141,13 +150,13 @@ with tab_form:
         sc1, sc2 = st.columns([3,1])
         with sc1:
             source = st.text_input("แหล่งอ้างอิง *",
-                placeholder="เช่น Annual Report 2025, Climate Action Plan, Bloomberg...")
+                placeholder="เช่น Annual Report 2025, Climate Action Plan...")
         with sc2:
             page_number = st.text_input("เลขหน้า * (บังคับ)", placeholder="42")
 
         sec("🖼️","ส่วนที่ 5 — ไฟล์แนบ")
         uploaded_file = st.file_uploader("อัปโหลดรูปกราฟ / ตาราง (ถ้ามี)",
-            type=["png","jpg","jpeg","webp","pdf"])
+            type=["png","jpg","jpeg","webp"])
 
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         submitted = st.form_submit_button("🚀  ส่งข้อมูล")
@@ -164,22 +173,18 @@ with tab_form:
         if errors:
             st.error(f"⚠️ กรุณากรอกให้ครบ: **{', '.join(errors)}**")
         else:
-            img_path = None
-            if uploaded_file:
-                safe_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uploaded_file.name}"
-                img_path  = str(UPLOAD_DIR / safe_name)
-                with open(img_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-            insert_row({
-                "full_name":      full_name.strip(),
-                "nickname":       nickname.strip(),
-                "student_id":     student_id.strip(),
-                "team":           team,
-                "key_findings":   key_findings.strip(),
-                "highlight_nums": highlight_nums.strip(),
-                "source":         source.strip(),
-                "page_number":    page_number.strip(),
-            }, img_path)
+            with st.spinner("กำลังบันทึก..."):
+                image_url = upload_image(uploaded_file)
+                insert_row({
+                    "full_name":      full_name.strip(),
+                    "nickname":       nickname.strip(),
+                    "student_id":     student_id.strip(),
+                    "team":           team,
+                    "key_findings":   key_findings.strip(),
+                    "highlight_nums": highlight_nums.strip(),
+                    "source":         source.strip(),
+                    "page_number":    page_number.strip(),
+                }, image_url)
             st.success(f"✅ บันทึกข้อมูลของ **{nickname.strip()}** ({team}) เรียบร้อยแล้ว!")
             st.balloons()
 
@@ -209,10 +214,13 @@ with tab_data:
     if df.empty:
         st.info("ยังไม่มีข้อมูล — รอเพื่อนส่งก่อนนะ!")
     else:
-        topic_filter = st.multiselect("กรองตามหัวข้อ", options=TOPICS, placeholder="ไม่เลือก = ดูทั้งหมด")
-        display_df   = df[df["team"].isin(topic_filter)] if topic_filter else df
+        topic_filter = st.multiselect("กรองตามหัวข้อ", options=TOPICS,
+                                       placeholder="ไม่เลือก = ดูทั้งหมด")
+        display_df = df[df["team"].isin(topic_filter)] if topic_filter else df
 
-        show_cols  = [c for c in ["full_name","nickname","student_id","team","key_findings","highlight_nums","source","page_number"] if c in display_df.columns]
+        show_cols  = [c for c in ["full_name","nickname","student_id","team",
+                                   "key_findings","highlight_nums","source","page_number"]
+                      if c in display_df.columns]
         rename_map = {
             "full_name":"ชื่อ-นามสกุล","nickname":"ชื่อเล่น","student_id":"รหัส",
             "team":"หัวข้อ","key_findings":"ประเด็นหลัก","highlight_nums":"ตัวเลขสำคัญ",
@@ -220,6 +228,28 @@ with tab_data:
         }
         st.dataframe(display_df[show_cols].rename(columns=rename_map),
                      use_container_width=True, hide_index=True, height=400)
+
+        # ── แสดงรูปภาพที่แนบมา ──
+        img_rows = display_df[display_df["image_path"].notna()] if "image_path" in display_df.columns else pd.DataFrame()
+        if not img_rows.empty:
+            st.divider()
+            st.markdown("""
+<div style="font-size:1rem;font-weight:700;color:#191c1f;display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+  <span style="display:inline-block;width:4px;height:18px;background:#003d7c;border-radius:99px;"></span>
+  รูปภาพที่แนบมา
+</div>
+""", unsafe_allow_html=True)
+            cols = st.columns(3)
+            for i, (_, row) in enumerate(img_rows.iterrows()):
+                url = row.get("image_path","")
+                if url and url.startswith("http"):
+                    with cols[i % 3]:
+                        st.markdown(f"""
+<div style="background:#fff;border-radius:12px;padding:12px;border:1px solid #eaecf2;margin-bottom:12px;">
+  <div style="font-size:0.78rem;font-weight:700;color:#003d7c;margin-bottom:6px;">{row.get('nickname','?')} · {row.get('team','?')}</div>
+  <img src="{url}" style="width:100%;border-radius:8px;">
+</div>
+""", unsafe_allow_html=True)
 
         st.divider()
         csv = display_df[show_cols].rename(columns=rename_map).to_csv(index=False).encode("utf-8-sig")
@@ -241,7 +271,8 @@ with tab_data:
                 new_nick    = st.text_input("ชื่อเล่น",       value=str(row.get("nickname","")))
                 new_sid     = st.text_input("รหัสนักศึกษา",   value=str(row.get("student_id","")))
                 cur_team    = row.get("team", TOPICS[0])
-                new_team    = st.selectbox("หัวข้อ", TOPICS, index=TOPICS.index(cur_team) if cur_team in TOPICS else 0)
+                new_team    = st.selectbox("หัวข้อ", TOPICS,
+                                           index=TOPICS.index(cur_team) if cur_team in TOPICS else 0)
             with col2:
                 new_finding = st.text_area("ประเด็นหลัก",     value=str(row.get("key_findings","")), height=120)
                 new_nums    = st.text_input("ตัวเลขสำคัญ",     value=str(row.get("highlight_nums","")))
