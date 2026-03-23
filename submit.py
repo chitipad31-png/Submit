@@ -2,29 +2,15 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 from datetime import datetime
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-from google.oauth2 import service_account
-import io
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-FOLDER_ID    = st.secrets["GDRIVE_FOLDER_ID"]
 
 @st.cache_resource
-def get_supabase():
+def get_client():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ลบ @st.cache_resource ออก เพื่อป้องกัน Broken Pipe
-def get_drive():
-    creds = service_account.Credentials.from_service_account_info(
-        dict(st.secrets["gcp"]),
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
-    return build("drive", "v3", credentials=creds)
-
-supabase = get_supabase()
-# ลบ drive = get_drive() ออก เพราะสร้างใหม่ทุกครั้งใน upload_to_drive แทน
+supabase = get_client()
 
 TOPICS = [
     "ข้อ 1: เป้าหมายรักษ์โลก",
@@ -41,30 +27,18 @@ TOPICS = [
     "ข้อ 12: คะแนนพนักงาน",
 ]
 
-def upload_to_drive(file, nickname, team) -> str | None:
+def upload_image(file) -> str | None:
+    """อัปโหลดไฟล์ไปยัง Supabase Storage และคืน public URL"""
     if file is None:
         return None
-    # สร้าง drive ใหม่ทุกครั้ง ป้องกัน Broken Pipe
-    drive = get_drive()
-    safe_name = f"{team}_{nickname}_{datetime.now().strftime('%H%M%S')}_{file.name}"
-    media = MediaIoBaseUpload(
-        io.BytesIO(file.getvalue()),
-        mimetype=file.type,
-        resumable=False
+    safe_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.name}"
+    supabase.storage.from_("uploads").upload(
+        path=safe_name,
+        file=file.getvalue(),
+        file_options={"content-type": file.type}
     )
-    meta = {"name": safe_name, "parents": [FOLDER_ID]}
-    try:
-        f = drive.files().create(body=meta, media_body=media, fields="id").execute()
-        file_id = f.get("id")
-        # ทำให้ดูได้สาธารณะ
-        drive.permissions().create(
-            fileId=file_id,
-            body={"type": "anyone", "role": "reader"}
-        ).execute()
-        return f"https://drive.google.com/file/d/{file_id}/view"
-    except Exception as e:
-        st.error(f"❌ Google Drive Error: {str(e)}")
-        return None
+    url = supabase.storage.from_("uploads").get_public_url(safe_name)
+    return url
 
 def insert_row(data, image_url):
     supabase.table("submissions").insert({
@@ -100,12 +74,18 @@ html, body, [class*="css"] { font-family: 'Sarabun',sans-serif; }
     border-radius:10px !important; border:1.5px solid #dde3f0 !important;
     background:#fff !important; font-size:0.95rem !important;
 }
+.stTextInput > div > div > input:focus, .stTextArea > div > div > textarea:focus {
+    border-color:#003d7c !important; box-shadow:0 0 0 3px rgba(0,61,124,0.1) !important;
+}
 div[data-testid="stForm"] .stButton > button {
-    background:linear-gradient(135deg,#003d7c,#1254a1);
+    background: linear-gradient(135deg,#003d7c,#1254a1);
     color:#fff; border:none; border-radius:12px;
     padding:14px 0; font-size:0.9rem; font-weight:800; width:100%;
     letter-spacing:0.08em; text-transform:uppercase;
     box-shadow:0 6px 20px rgba(0,61,124,0.3);
+}
+div[data-testid="stForm"] .stButton > button:hover {
+    transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,61,124,0.35);
 }
 .stDownloadButton > button {
     background:#fff !important; color:#003d7c !important;
@@ -120,7 +100,7 @@ div[data-testid="stForm"] .stButton > button {
     background:linear-gradient(135deg,#003d7c 0%,#1e5cb3 100%);
     color:#fff; padding:11px 20px; border-radius:12px;
     font-weight:800; font-size:0.9rem; margin:20px 0 14px 0;
-    box-shadow:0 4px 12px rgba(0,61,124,0.2);
+    letter-spacing:0.03em; box-shadow:0 4px 12px rgba(0,61,124,0.2);
 }
 button[data-baseweb="tab"] {
     font-family:'Sarabun',sans-serif !important;
@@ -161,7 +141,7 @@ with tab_form:
         sec("✍️","ส่วนที่ 3 — เนื้อหาที่วิเคราะห์")
         st.markdown('<div class="note-box">⚠️ <b>ห้ามก๊อปแปะ!</b> สรุปมาเป็นภาษาตัวเองเท่านั้น</div>', unsafe_allow_html=True)
         key_findings = st.text_area("สรุปประเด็นหลักที่ค้นพบ *",
-            placeholder="เช่น บริษัทมีรายได้หลักมาจาก...", height=130)
+            placeholder="เช่น บริษัทมีรายได้หลักมาจาก... โดยมีการเติบโต...", height=130)
         st.markdown('<div class="note-box">💡 ระบุตัวเลขให้ชัด เช่น &quot;ยอดขายโต 69%&quot;</div>', unsafe_allow_html=True)
         highlight_nums = st.text_input("ตัวเลขทางการเงิน / สถิติสำคัญ *",
             placeholder="เช่น Revenue +69% YoY, EBIT margin 18.3%")
@@ -176,7 +156,7 @@ with tab_form:
 
         sec("🖼️","ส่วนที่ 5 — ไฟล์แนบ")
         uploaded_file = st.file_uploader("อัปโหลดรูปกราฟ / ตาราง (ถ้ามี)",
-            type=["png","jpg","jpeg","webp","pdf"])
+            type=["png","jpg","jpeg","webp"])
 
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         submitted = st.form_submit_button("🚀  ส่งข้อมูล")
@@ -194,7 +174,7 @@ with tab_form:
             st.error(f"⚠️ กรุณากรอกให้ครบ: **{', '.join(errors)}**")
         else:
             with st.spinner("กำลังบันทึก..."):
-                image_url = upload_to_drive(uploaded_file, nickname.strip(), team)
+                image_url = upload_image(uploaded_file)
                 insert_row({
                     "full_name":      full_name.strip(),
                     "nickname":       nickname.strip(),
@@ -249,23 +229,25 @@ with tab_data:
         st.dataframe(display_df[show_cols].rename(columns=rename_map),
                      use_container_width=True, hide_index=True, height=400)
 
-        # ── แสดงลิงก์รูปภาพ ──
+        # ── แสดงรูปภาพที่แนบมา ──
         img_rows = display_df[display_df["image_path"].notna()] if "image_path" in display_df.columns else pd.DataFrame()
         if not img_rows.empty:
             st.divider()
             st.markdown("""
 <div style="font-size:1rem;font-weight:700;color:#191c1f;display:flex;align-items:center;gap:8px;margin-bottom:12px;">
   <span style="display:inline-block;width:4px;height:18px;background:#003d7c;border-radius:99px;"></span>
-  ไฟล์แนบ (Google Drive)
+  รูปภาพที่แนบมา
 </div>
 """, unsafe_allow_html=True)
-            for _, row in img_rows.iterrows():
+            cols = st.columns(3)
+            for i, (_, row) in enumerate(img_rows.iterrows()):
                 url = row.get("image_path","")
                 if url and url.startswith("http"):
-                    st.markdown(f"""
-<div style="background:#fff;border-radius:12px;padding:12px 16px;border:1px solid #eaecf2;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">
-  <span style="font-size:0.88rem;font-weight:600;color:#191c1f;">{row.get('nickname','?')} · {row.get('team','?')}</span>
-  <a href="{url}" target="_blank" style="background:#003d7c;color:#fff;padding:6px 14px;border-radius:8px;font-size:0.8rem;font-weight:700;text-decoration:none;">🔗 เปิดไฟล์</a>
+                    with cols[i % 3]:
+                        st.markdown(f"""
+<div style="background:#fff;border-radius:12px;padding:12px;border:1px solid #eaecf2;margin-bottom:12px;">
+  <div style="font-size:0.78rem;font-weight:700;color:#003d7c;margin-bottom:6px;">{row.get('nickname','?')} · {row.get('team','?')}</div>
+  <img src="{url}" style="width:100%;border-radius:8px;">
 </div>
 """, unsafe_allow_html=True)
 
