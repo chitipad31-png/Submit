@@ -15,7 +15,7 @@ FOLDER_ID    = st.secrets["GDRIVE_FOLDER_ID"]
 def get_supabase():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-@st.cache_resource
+# ลบ @st.cache_resource ออก เพื่อป้องกัน Broken Pipe
 def get_drive():
     creds = service_account.Credentials.from_service_account_info(
         dict(st.secrets["gcp"]),
@@ -24,7 +24,7 @@ def get_drive():
     return build("drive", "v3", credentials=creds)
 
 supabase = get_supabase()
-drive    = get_drive()
+# ลบ drive = get_drive() ออก เพราะสร้างใหม่ทุกครั้งใน upload_to_drive แทน
 
 TOPICS = [
     "ข้อ 1: เป้าหมายรักษ์โลก",
@@ -44,6 +44,8 @@ TOPICS = [
 def upload_to_drive(file, nickname, team) -> str | None:
     if file is None:
         return None
+    # สร้าง drive ใหม่ทุกครั้ง ป้องกัน Broken Pipe
+    drive = get_drive()
     safe_name = f"{team}_{nickname}_{datetime.now().strftime('%H%M%S')}_{file.name}"
     media = MediaIoBaseUpload(
         io.BytesIO(file.getvalue()),
@@ -54,6 +56,7 @@ def upload_to_drive(file, nickname, team) -> str | None:
     try:
         f = drive.files().create(body=meta, media_body=media, fields="id").execute()
         file_id = f.get("id")
+        # ทำให้ดูได้สาธารณะ
         drive.permissions().create(
             fileId=file_id,
             body={"type": "anyone", "role": "reader"}
