@@ -51,14 +51,17 @@ def upload_to_drive(file, nickname, team) -> str | None:
         resumable=False
     )
     meta = {"name": safe_name, "parents": [FOLDER_ID]}
-    f = drive.files().create(body=meta, media_body=media, fields="id").execute()
-    file_id = f.get("id")
-    # ทำให้ดูได้สาธารณะ
-    drive.permissions().create(
-        fileId=file_id,
-        body={"type": "anyone", "role": "reader"}
-    ).execute()
-    return f"https://drive.google.com/file/d/{file_id}/view"
+    try:
+        f = drive.files().create(body=meta, media_body=media, fields="id").execute()
+        file_id = f.get("id")
+        drive.permissions().create(
+            fileId=file_id,
+            body={"type": "anyone", "role": "reader"}
+        ).execute()
+        return f"https://drive.google.com/file/d/{file_id}/view"
+    except Exception as e:
+        st.error(f"❌ Google Drive Error: {str(e)}")
+        return None
 
 def insert_row(data, image_url):
     supabase.table("submissions").insert({
